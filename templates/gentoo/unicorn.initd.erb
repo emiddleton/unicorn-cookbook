@@ -1,0 +1,73 @@
+#!/sbin/runscript
+# Copyright 1999-2011 Gentoo Foundation
+# Distributed under the terms of the GNU General Public License v2
+# $Header: $
+
+opts="${opts} upgrade reload"
+
+depend() {
+	need <%= @need %>
+	use dns logger netmount<%=
+  @before.nil? ? '' : "\nbefore #{@before}" %>
+}
+
+start() {
+	ebegin "Starting <%= @name %>"
+	start-stop-daemon --start --chdir ${APP_ROOT} --pidfile ${UNICORN_PID_FILE} \
+		 --exec /usr/bin/bundle -- exec /usr/bin/unicorn -D -E deployment -c ${UNICORN_CONFIG_FILE}
+	eend $? "Failed to start <%= @name %>"
+}
+
+stop() {
+	ebegin "Stopping <%= @name %>"
+	einfo "Sending QUIT to <%= @name %>"
+	start-stop-daemon --signal QUIT --pidfile ${UNICORN_PID_FILE}
+	einfo "Sleeping 3 seconds before pid-files checking"
+	sleep 3
+	if [ -f ${UNICORN_PID_FILE} ]; then
+		einfo "Sending TERM to <%= @name %>"
+		start-stop-daemon --stop --pidfile ${UNICORN_PID_FILE}
+	fi
+	eend $? "Failed to stop <%= @name %>"
+}
+
+reload() {
+	ebegin "Reloading <%= @name %>"
+	if [ -f ${UNICORN_PID_FILE} ]; then
+		start-stop-daemon --signal HUP --pidfile ${UNICORN_PID_FILE}
+	else
+		stop
+		start
+	fi
+	eend $? "Failed to reload <%= @name %>"
+}
+
+upgrade() {
+	ebegin "Upgrading <%= @name %>"
+
+	einfo "Sending USR2 to old binary"
+	start-stop-daemon --signal USR2 --pidfile ${UNICORN_PID_FILE}
+
+	einfo "Sleeping 3 seconds before pid-files checking"
+	sleep 3
+
+	if [ ! -f ${UNICORN_PID_FILE}.oldbin ]; then
+		eerror "File with old pid not found"
+		return 1
+	fi
+
+	if [ ! -f ${UNICORN_PID_FILE} ]; then
+		eerror "New binary failed to start"
+		return 1
+	fi
+
+	einfo "Sleeping 3 seconds before WINCH"
+	sleep 3 ; kill -WINCH `cat ${UNICORN_PID_FILE}.oldbin`
+
+	einfo "Sending QUIT to old binary"
+	kill -QUIT `cat ${UNICORN_PID_FILE}.oldbin`
+
+	einfo "Upgrade completed"
+
+	eend $? "Upgrade failed"
+}
